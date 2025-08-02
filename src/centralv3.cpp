@@ -54,7 +54,7 @@ void loop()
         startScanning();
         scanInProgress = false;
         Log.info("Scan completed or timed out");
-        Log.info("Test1.1");
+        Log.info("Test1.2");
     }
     
     // Watchdog: If scan has been running too long, something is wrong

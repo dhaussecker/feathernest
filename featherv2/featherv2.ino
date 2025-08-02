@@ -8,13 +8,14 @@ uint8_t state = 1;
 int32_t previousTime = -1;
 
 // STAGE 3 VARIABLES
-const unsigned long BLE_ATTEMPT_INTERVAL = 480; // 60 seconds * 8Hz
+unsigned long BLE_ATTEMPT_INTERVAL = 480; // 60 seconds * 8Hz
 unsigned long lastBLEAttempt = 0;
 bool stage3Active = false;
 uint32_t oldTimeStamp = 0;
 
 
 bool timeStampStored = false;
+bool sentFlag = true;
 
 void setup() {
   
@@ -50,13 +51,13 @@ void loop() {
 
   //STAGE 1: FEATHER LOCALLY STORES A TIMESTAMP FROM A NEST DEVICE TO FLASH
   // Handle BLE operations
-  if (!hasNewTimestamp) 
+  if (!hasNewTimestamp && sentFlag) 
   {
     Serial.print("Latest timestamp: ");
     Serial.println(lastAckTimestamp);
     handleBLELoop();
   }
-  if (hasNewTimestamp && !timeStampStored) 
+  if (hasNewTimestamp && !timeStampStored && sentFlag) 
   {
       Serial.println("WE ARE IN HERE");
       Serial.println(lastAckTimestamp);
@@ -81,7 +82,7 @@ void loop() {
   }
 
   // STAGE 3: Every 1 minute attempt to find a Nest to connect to and send the data
-  if (readRTC() >= BLE_ATTEMPT_INTERVAL && timeStampStored && !stage3Active)
+  if (readRTC() >= BLE_ATTEMPT_INTERVAL && timeStampStored && !stage3Active && sentFlag)
   {
     Serial.println("STAGE 3 STARTED");
     stage3Active = true;
@@ -97,19 +98,25 @@ void loop() {
     handleBLELoop();
     if (oldTimeStamp != lastAckTimestamp)
     {
-      Serial.println("DATA SENT");
+      Serial.println("DATA SENT - CYCLE COMPLETE");
       stage3Active = false;
       // Clear old data files
       deleteLogs("/time.txt");
       deleteLogs("/state.txt");
-      hasNewTimestamp = true;
+      // Reset to wait for NEW timestamp from central
+      hasNewTimestamp = false;  // Wait for fresh timestamp
       timeStampStored = false;
       resetRTC();
+      Serial.println("Waiting for new timestamp from central...");
+      sentFlag = true;
+      BLE_ATTEMPT_INTERVAL += 480;
     }
-    else if (oldTimeStamp == lastAckTimestamp && readRTC()-lastBLEAttempt >= 240)
+    else if (oldTimeStamp == lastAckTimestamp && readRTC()-lastBLEAttempt >= 240 && sentFlag == true)
     {
       Serial.println("30 SECOND TIMEOUT");
       stage3Active = false;
+      sentFlag = false;
+      BLE_ATTEMPT_INTERVAL += 720;
     }
 
   }

@@ -61,9 +61,9 @@ void loadDataFromFlash(DataPoint* dataBuffer, int numDataPoints) {
         uint8_t state = line.substring(secondComma + 1).toInt();
         
         // Convert to DataPoint format
-        dataBuffer[dataCount].val1 = state;                    // Motion state
-        dataBuffer[dataCount].val2 = baseTimestamp + startTime; // Absolute start time  
-        dataBuffer[dataCount].val3 = baseTimestamp + endTime;   // Absolute end time
+        dataBuffer[dataCount].val1 = state;                        // Motion state
+        dataBuffer[dataCount].val2 = baseTimestamp + (startTime / 8); // Absolute start time (convert 8Hz ticks to seconds)
+        dataBuffer[dataCount].val3 = baseTimestamp + (endTime / 8);   // Absolute end time (convert 8Hz ticks to seconds)
         dataCount++;
         
         Serial.print("Loaded motion event: State=");
