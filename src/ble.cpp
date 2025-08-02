@@ -371,12 +371,31 @@ bool enableNotifications() {
 void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, void* context) {
     static unsigned long lastPacketTime = millis();
     static int lastPacketNumber = 0;
+    static int consecutiveTimeouts = 0;
+    
+    // Special case: reset static variables on new connection
+    if (!isConnected) {
+        lastPacketNumber = 0;
+        consecutiveTimeouts = 0;
+        lastPacketTime = millis();
+        return;
+    }
     
     Log.info("Data received! Length: %d bytes", len);
     
-    // Check for packet timeout (if no packets received for 5 seconds, connection likely lost)
-    if (millis() - lastPacketTime > 5000 && lastPacketNumber > 0) {
-        Log.warn("Packet timeout detected - connection may be lost");
+    // Check for packet timeout (if no packets received for 3 seconds, connection likely lost)
+    if (millis() - lastPacketTime > 3000 && lastPacketNumber > 0) {
+        consecutiveTimeouts++;
+        Log.warn("Packet timeout detected - connection may be lost (timeout count: %d)", consecutiveTimeouts);
+        
+        // If we get 2 consecutive timeouts, force disconnect
+        if (consecutiveTimeouts >= 2) {
+            Log.error("Multiple timeouts detected - forcing disconnect");
+            forceDisconnect();
+            return;
+        }
+    } else {
+        consecutiveTimeouts = 0;  // Reset timeout counter on successful packet
     }
     lastPacketTime = millis();
     
@@ -388,6 +407,17 @@ void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, 
     
     // Parse the DataPacket
     DataPacket* packet = (DataPacket*)data;
+    
+    // Check for packet sequence issues
+    if (lastPacketNumber > 0 && packet->packetNumber != lastPacketNumber + 1) {
+        if (packet->packetNumber == 1) {
+            Log.warn("Packet sequence restarted! Previous packet: %d, Current: %d", lastPacketNumber, packet->packetNumber);
+            Log.warn("Peripheral may have reset - clearing data collection");
+            resetDataCollection();
+        } else {
+            Log.error("Packet sequence error! Expected: %d, Received: %d", lastPacketNumber + 1, packet->packetNumber);
+        }
+    }
     
     // Update last packet tracking
     lastPacketNumber = packet->packetNumber;

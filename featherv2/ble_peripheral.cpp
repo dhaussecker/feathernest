@@ -75,12 +75,8 @@ void sendDataBatch() {
   
   const int totalPackets = NUM_DATA_POINTS;
   
-  Serial.println("Starting data transmission...");
-  
   for (int packet = 0; packet < totalPackets; packet++) {
     if (!isConnected) {
-      Serial.print("Connection lost during transmission at packet ");
-      Serial.println(packet + 1);
       isSending = false;
       return;
     }
@@ -91,37 +87,13 @@ void sendDataBatch() {
     dataPacket.pointsInPacket = 1;
     dataPacket.points[0] = dataBuffer[packet];
     
-    bool notifyResult = dataCharacteristic.notify((uint8_t*)&dataPacket, sizeof(DataPacket));
-    if (!notifyResult) {
-      Serial.print("Notify failed at packet ");
-      Serial.println(packet + 1);
-      Serial.println("Connection may have been lost during transmission");
+    if (!dataCharacteristic.notify((uint8_t*)&dataPacket, sizeof(DataPacket))) {
       isSending = false;
       return;
     }
     
-    // Check connection status periodically during transmission
-    if ((packet + 1) % 10 == 0) {
-      Serial.print("Transmission progress: ");
-      Serial.print(packet + 1);
-      Serial.print("/");
-      Serial.print(totalPackets);
-      Serial.print(" - Connection active: ");
-      Serial.println(isConnected ? "YES" : "NO");
-    }
-    
-    // Print progress every 50 packets
-    if ((packet + 1) % 50 == 0) {
-      Serial.print("Sent packet ");
-      Serial.print(packet + 1);
-      Serial.print("/");
-      Serial.println(totalPackets);
-    }
-    
-    delay(150);  // 150ms delay: 100 packets × 150ms = 15 seconds (well under 32s timeout)
+    delay(20);
   }
-  
-  Serial.println("All packets sent successfully, waiting for ACK...");
 }
 
 void ackCallback(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
@@ -139,41 +111,9 @@ void ackCallback(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint1
 void connectCallback(uint16_t conn_handle) {
   isConnected = true;
   lastSendTime = millis();
-  
-  Serial.println("Connection established, configuring parameters...");
-  
-  // Request maximum supervision timeout for data transmission
-  // 100 packets × 150ms = 15 seconds, safely under 32s timeout limit
-  Serial.println("Requesting maximum supervision timeout (15s transmission time)...");
-  
-  // Use maximum allowed supervision timeout with very conservative intervals
-  bool result1 = Bluefruit.Gap.requestConnParams(conn_handle, 
-    50,   // min_conn_interval (62.5ms) - very conservative
-    100,  // max_conn_interval (125ms) - very conservative  
-    0,    // slave_latency
-    3200  // supervision_timeout (32000ms = 32 seconds maximum)
-  );
-  
-  Serial.print("First connection parameter request: ");
-  Serial.println(result1 ? "SUCCESS" : "FAILED");
-  
-  delay(500);
-  
-  // Try setting connection parameters directly as well 
-  bool result2 = Bluefruit.Gap.setConnParams(40, 80, 0, 3200);
-  Serial.print("Direct connection parameter set: ");
-  Serial.println(result2 ? "SUCCESS" : "FAILED");
-  
-  // Longer delay to ensure parameters are applied
-  delay(2000);
-  
-  Serial.println("Connection configured with maximum timeout - ready for transmission");
 }
 
 void disconnectCallback(uint16_t conn_handle, uint8_t reason) {
-  Serial.print("PERIPHERAL DISCONNECTED - Reason: ");
-  Serial.println(reason);
-  
   isConnected = false;
   isSending = false;
 }
