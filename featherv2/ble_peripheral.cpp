@@ -6,7 +6,7 @@ extern void loadDataFromFlash(DataPoint* dataBuffer, int numDataPoints);
 
 // Configuration
 const char* DEVICE_NAME = "nRF_01";
-const int NUM_DATA_POINTS = 100;
+const int NUM_DATA_POINTS = 200;
 const unsigned long SEND_INTERVAL = 10000; // 10 seconds
 
 // BLE objects

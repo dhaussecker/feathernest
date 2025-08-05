@@ -35,9 +35,11 @@ extern int currentTargetIndex;
 extern bool isConnected;
 extern BlePeerDevice connectedDevice;
 extern BleAddress targetDeviceAddress;
+extern bool disconnectRequested;
 
 // Global variables for data collection
-extern String collectedDataString;
+extern char dataBuffer[];
+extern int dataBufferPos;
 extern int nonZeroDataCount;
 
 // Global variables for services and characteristics

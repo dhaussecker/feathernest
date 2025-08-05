@@ -1,10 +1,9 @@
-#include "accelerometer.h"
+#include "accelerometernew.h"
 #include "BLE_Peripheral.h"
 #include "flash_storage.h"
 #include "rtc_clock.h"
 
 bool timeSync = false;
-uint8_t state = 1;
 int32_t previousTime = -1;
 
 // STAGE 3 VARIABLES
@@ -15,12 +14,9 @@ uint32_t oldTimeStamp = 0;
 
 
 bool timeStampStored = false;
-bool sentFlag = true;
 
 void setup() {
   
-  pinMode(INT1_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(INT1_PIN), handleMotionInterrupt, RISING);
   Wire.begin();
   Serial.begin(115200);
   
@@ -51,13 +47,13 @@ void loop() {
 
   //STAGE 1: FEATHER LOCALLY STORES A TIMESTAMP FROM A NEST DEVICE TO FLASH
   // Handle BLE operations
-  if (!hasNewTimestamp && sentFlag) 
+  if (!hasNewTimestamp) 
   {
     Serial.print("Latest timestamp: ");
     Serial.println(lastAckTimestamp);
     handleBLELoop();
   }
-  if (hasNewTimestamp && !timeStampStored && sentFlag) 
+  if (hasNewTimestamp && !timeStampStored) 
   {
       Serial.println("WE ARE IN HERE");
       Serial.println(lastAckTimestamp);
@@ -70,10 +66,11 @@ void loop() {
   }
 
   // STAGE 2: Feather begins to collect equipment state data with time relative to timestamp
-  if (timeStampStored && motionDetected) {
-    Serial.println("STAGE 2");
+  if (timeStampStored && motionDetected && !stage3Active) {
     motionDetected = false;
+    Serial.println("STAGE 2");
     int32_t time = readRTC();
+    //int state = checkForStateChange();
     writeLogEntry(0, state, previousTime, time, "/state.txt", 1);
     previousTime = time;
     Serial.println("=== Motion Event Logged ===");
@@ -82,7 +79,7 @@ void loop() {
   }
 
   // STAGE 3: Every 1 minute attempt to find a Nest to connect to and send the data
-  if (readRTC() >= BLE_ATTEMPT_INTERVAL && timeStampStored && !stage3Active && sentFlag)
+  if (readRTC() >= BLE_ATTEMPT_INTERVAL && timeStampStored && !stage3Active)
   {
     Serial.println("STAGE 3 STARTED");
     stage3Active = true;
@@ -108,16 +105,14 @@ void loop() {
       timeStampStored = false;
       resetRTC();
       Serial.println("Waiting for new timestamp from central...");
-      sentFlag = true;
-      BLE_ATTEMPT_INTERVAL += 480;
     }
-    else if (oldTimeStamp == lastAckTimestamp && readRTC()-lastBLEAttempt >= 240 && sentFlag == true)
+/*    else if (oldTimeStamp == lastAckTimestamp && readRTC()-lastBLEAttempt >= 240 && sentFlag == true)
     {
       Serial.println("30 SECOND TIMEOUT");
       stage3Active = false;
       sentFlag = false;
       BLE_ATTEMPT_INTERVAL += 720;
-    }
+    }*/
 
   }
   

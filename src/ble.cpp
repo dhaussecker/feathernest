@@ -1,4 +1,5 @@
 #include "ble.h"
+#include "gpstime.h"
 
 // Define the target device names
 const char* TARGET_DEVICE_NAMES[] = {"nRF_01", "nRF_02", "nRF_03"};
@@ -11,9 +12,12 @@ int currentTargetIndex = 0;  // Round-robin index for target devices
 bool isConnected = false;
 BlePeerDevice connectedDevice;
 BleAddress targetDeviceAddress;
+bool disconnectRequested = false;
 
 // Global variables for data collection
-String collectedDataString = "";
+// Pre-allocate buffer to prevent heap fragmentation
+char dataBuffer[2048];  // Buffer for collected data
+int dataBufferPos = 0;  // Current position in buffer
 int nonZeroDataCount = 0;
 
 // Service and characteristic UUIDs
@@ -70,8 +74,53 @@ bool startScanning() {
     // Reset scan count
     scanCount = 0;
     
-    // Use the original blocking scan - if it hangs, the main loop will retry
-    Vector<BleScanResult> scanResults = BLE.scan();
+    // Mark scan start time for duration tracking
+    unsigned long scanStartTime = millis();
+    
+    // Use blocking scan but with a reasonable array size to prevent hanging
+    BleScanResult results[20]; // Buffer for up to 20 results
+    
+    // Ensure WiFi doesn't interfere with BLE scanning
+    // Small delay to let radio stabilize after any WiFi activity
+    delay(100);
+    
+    // Use callback-based scanning with timeout to prevent hanging
+    isScanning = true;
+    Vector<BleScanResult> scanResults;
+    
+    // Start non-blocking scan with callback
+    int scanResult = BLE.scan([&scanResults](const BleScanResult& result) {
+        scanResults.append(result);
+    });
+    
+    if (scanResult < 0) {
+        Log.error("Failed to start BLE scan, error: %d", scanResult);
+        isScanning = false;
+        return false;
+    }
+    
+    // Wait for scan with timeout (5 seconds max)
+    unsigned long scanTimeout = 5000;
+    unsigned long scanStart = millis();
+    
+    while (isScanning && (millis() - scanStart < scanTimeout)) {
+        delay(100);
+        Particle.process(); // Keep cloud connection alive
+    }
+    
+    // Stop scanning if still running
+    if (isScanning) {
+        BLE.stopScanning();
+        Log.warn("BLE scan timed out after %lu ms", scanTimeout);
+    }
+    
+    isScanning = false;
+    
+    // Log scan duration
+    unsigned long scanDuration = millis() - scanStartTime;
+    Log.info("BLE scan took %lu ms", scanDuration);
+    
+    int resultCount = scanResults.size();
     
     Log.info("Scan complete. Found %d devices", scanResults.size());
     
@@ -441,11 +490,20 @@ void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, 
         
         // Collect non-zero data points
         if (point->val1 != 0 || point->val2 != 0 || point->val3 != 0) {
-            // Add to collected data string
-            if (collectedDataString.length() > 0) {
-                collectedDataString += ",";
+            // Add to collected data buffer
+            if (dataBufferPos > 0 && dataBufferPos < (int)(sizeof(dataBuffer) - 1)) {
+                dataBuffer[dataBufferPos++] = ',';
             }
-            collectedDataString += String::format("%d:%lu:%lu", point->val1, point->val2, point->val3);
+            
+            // Format data point into buffer
+            int written = snprintf(dataBuffer + dataBufferPos, 
+                                 sizeof(dataBuffer) - dataBufferPos,
+                                 "%d:%lu:%lu", point->val1, point->val2, point->val3);
+            
+            if (written > 0 && dataBufferPos + written < (int)sizeof(dataBuffer)) {
+                dataBufferPos += written;
+            }
+            
             nonZeroDataCount++;
             Log.info("    Non-zero data point collected (total: %d)", nonZeroDataCount);
         }
@@ -455,35 +513,16 @@ void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, 
     if (packet->packetNumber == packet->totalPackets) {
         Log.info("All packets received! Total: %d", packet->totalPackets);
         
-        Log.info("Data transfer complete. All 100 packets received successfully!");
+        Log.info("Data transfer complete. All packets received successfully!");
         
-        // Publish collected non-zero data points BEFORE sending ACK to avoid reset issues
+        // Publish collected non-zero data points immediately
         const char* deviceName = TARGET_DEVICE_NAMES[currentTargetIndex];
         publishCollectedData(deviceName);
         
-        // Try to send ACK with timeout protection to prevent hanging
-        Log.info("Attempting to send ACK with timeout protection...");
+        // DON'T send ACK or disconnect from callback - set flag for main loop
+        Log.info("Queuing disconnect after data transfer complete");
+        disconnectRequested = true;
         
-        // Create a separate thread or use a non-blocking approach
-        bool ackSent = false;
-        unsigned long ackStartTime = millis();
-        
-        // Attempt ACK send - if it takes more than 2 seconds, give up
-        Log.info("Sending ACK to peripheral...");
-        ackSent = sendAckWithTimestamp();
-        unsigned long ackDuration = millis() - ackStartTime;
-        
-        if (ackSent) {
-            Log.info("ACK sent successfully in %lu ms", ackDuration);
-        } else {
-            Log.warn("ACK send failed after %lu ms", ackDuration);
-        }
-        
-        // Always disconnect regardless of ACK status
-        Log.info("Disconnecting to scan for next device...");
-        forceDisconnect();
-        
-        // TODO: Process complete data set if needed
     } else {
         Log.info("Waiting for more packets... (%d/%d)", packet->packetNumber, packet->totalPackets);
     }
@@ -518,28 +557,29 @@ void forceDisconnect() {
     
     Log.info("Forcing disconnection from device...");
     
-    // Always reset connection state first to prevent hanging
-    isConnected = false;
-    Log.info("Connection state reset to false");
-    
     if (connectedDevice.connected()) {
         Log.info("Device reports as connected - sending disconnect command...");
         connectedDevice.disconnect();
         Log.info("Disconnect command sent");
+        delay(100); // Give time for disconnect to process
     } else {
         Log.info("Device already reports as disconnected");
     }
     
-    // Clear the connected device object regardless
+    // Only NOW set connection state to false (after disconnect command)
+    isConnected = false;
+    Log.info("Connection state reset to false");
+    
+    // Clear the connected device object
     connectedDevice = BlePeerDevice();
     Log.info("Connected device object cleared");
     
-    // Manually trigger what the disconnect callback would do
     Log.info("Force disconnect complete - ready to resume scanning");
 }
 
 void resetDataCollection() {
-    collectedDataString = "";
+    memset(dataBuffer, 0, sizeof(dataBuffer));
+    dataBufferPos = 0;
     nonZeroDataCount = 0;
     Log.info("Data collection reset for new device");
 }
@@ -550,9 +590,25 @@ void publishCollectedData(const char* deviceName) {
         return;
     }
     
-    // Create JSON-like event data
-    String eventData = String::format("{\"device\":\"%s\",\"count\":%d,\"data\":\"%s\"}", 
-                                     deviceName, nonZeroDataCount, collectedDataString.c_str());
+    // Get current GPS data
+    GPSData gpsData = getGPSData();
+    
+    // Create JSON-like event data with GPS info
+    String eventData;
+    if (gpsData.valid) {
+        // Null terminate the data buffer
+        dataBuffer[dataBufferPos] = '\0';
+        eventData = String::format("{\"lat\":%.6f,\"lon\":%.6f,\"time\":%lld,\"device\":\"%s\",\"count\":%d,\"data\":\"%s\"}", 
+                                 gpsData.latitude, gpsData.longitude, (long long)gpsData.timestamp,
+                                 deviceName, nonZeroDataCount, dataBuffer);
+    } else {
+        // If GPS not available, use 0 values
+        // Null terminate the data buffer
+        dataBuffer[dataBufferPos] = '\0';
+        eventData = String::format("{\"lat\":0.0,\"lon\":0.0,\"time\":%lld,\"device\":\"%s\",\"count\":%d,\"data\":\"%s\"}", 
+                                 (long long)Time.now(),
+                                 deviceName, nonZeroDataCount, dataBuffer);
+    }
     
     Log.info("Publishing %d non-zero data points from %s to Particle Cloud", nonZeroDataCount, deviceName);
     Log.info("Event data: %s", eventData.c_str());

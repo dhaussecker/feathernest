@@ -179,7 +179,7 @@ bool writeUnixTimestamp(uint32_t unixTime, const char* filename = LOG_FILENAME) 
 bool writeLogEntry(uint32_t timestamp, uint8_t state, uint32_t startTime, 
                    uint32_t endTime, const char* filename = LOG_FILENAME, 
                    uint8_t format = 1) {
-  char buffer[100];
+  char buffer[200];
   
   switch(format) {
     case 0:  // Unix timestamp only
